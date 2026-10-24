@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check manifest version matches tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          V=$(python3 -c "import json;print(json.load(open('manifest.json'))['version'])")
+          [ "v$V" = "${GITHUB_REF_NAME}" ] || { echo "manifest.json is $V but tag is ${GITHUB_REF_NAME}"; exit 1; }
+
+      - name: Syntax check
+        run: for f in background.js content/*.js shared/*.js sidepanel/app.js sidepanel/scanner.js; do node --check "$f"; done
+
+      - name: Unit tests
+        run: node tests/run.mjs
+
+      - name: Build extension zip
+        run: ./scripts/build.sh
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          body_path: .github/RELEASE_NOTES.md
+          make_latest: true

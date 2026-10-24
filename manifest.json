@@ -4,6 +4,8 @@
   "short_name": "Lottie Scraper",
   "version": "1.0.0",
   "description": "Detect, preview and bulk-download every Lottie animation on a page as JSON, .lottie or a single ZIP.",
+  "author": "Neelanjan Chakraborty",
+  "homepage_url": "https://github.com/Neelanjan-chakraborty/LottieScrapper",
   "minimum_chrome_version": "116",
   "icons": {
     "16": "icons/icon16.png",
@@ -25,19 +27,36 @@
   "background": {
     "service_worker": "background.js"
   },
-  "permissions": ["sidePanel", "scripting", "activeTab", "downloads", "storage", "webRequest"],
-  "host_permissions": ["<all_urls>"],
+  "permissions": [
+    "sidePanel",
+    "scripting",
+    "activeTab",
+    "downloads",
+    "storage",
+    "webRequest"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content/hook.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content/hook.js"
+      ],
       "run_at": "document_start",
       "all_frames": true,
       "world": "MAIN"
     },
     {
-      "matches": ["<all_urls>"],
-      "js": ["content/detector.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content/detector.js"
+      ],
       "run_at": "document_idle",
       "all_frames": true
     }

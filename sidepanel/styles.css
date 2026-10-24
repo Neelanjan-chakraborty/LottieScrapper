@@ -158,7 +158,8 @@ button { font: inherit; color: inherit; }
 .chip b { color: var(--text); }
 .chip.hot { background: rgba(45, 212, 191, 0.14); color: var(--teal); }
 .chip.hot b { color: var(--teal); }
-.progress .btn { align-self: flex-end; margin-top: -30px; }
+.progress-foot { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; }
+.progress-foot .btn { flex: none; }
 
 /* ---------- toolbar ---------- */
 .toolbar { display: flex; align-items: center; gap: 8px; position: sticky; top: 0; z-index: 5; padding: 8px 0; margin: -4px 0; background: linear-gradient(var(--bg) 70%, transparent); }
@@ -305,13 +306,18 @@ dialog::backdrop { background: rgba(5, 6, 12, 0.55); backdrop-filter: blur(4px);
 .num { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-weight: 600; }
 .num input { width: 90px; padding: 6px 10px; text-align: right; }
 
+.credit { margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--muted); font-size: 11.5px; text-align: center; line-height: 1.7; }
+.credit b { color: var(--text); }
+.credit a { color: var(--teal); text-decoration: none; font-weight: 600; }
+.credit a:hover { text-decoration: underline; }
+
 /* ---------- export overlay ---------- */
 .overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(5, 6, 12, 0.6); backdrop-filter: blur(6px); animation: rise 0.2s ease; }
 .export-card { background: var(--bg-2); border: 1px solid var(--border-2); border-radius: 20px; padding: 24px; width: min(300px, calc(100vw - 32px)); text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .ring-progress { position: relative; width: 120px; height: 120px; }
-.ring-progress svg { transform: rotate(-90deg); }
+.ring-progress svg { transform: rotate(-90deg); overflow: visible; filter: drop-shadow(0 0 6px rgba(45, 212, 191, 0.55)); }
 .ring-bg { fill: none; stroke: var(--surface-2); stroke-width: 9; }
-.ring-fg { fill: none; stroke: var(--teal); stroke-width: 9; stroke-linecap: round; stroke-dasharray: 326.7; stroke-dashoffset: 326.7; transition: stroke-dashoffset 0.25s ease; filter: drop-shadow(0 0 6px rgba(45, 212, 191, 0.6)); }
+.ring-fg { fill: none; stroke: var(--teal); stroke-width: 9; stroke-linecap: round; stroke-dasharray: 326.7; stroke-dashoffset: 326.7; transition: stroke-dashoffset 0.25s ease; }
 .ring-progress span { position: absolute; inset: 0; display: grid; place-items: center; font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .export-title { font-weight: 700; }
 .export-detail { color: var(--muted); font-size: 11.5px; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 16px; }

@@ -636,6 +636,7 @@
   });
 
   // ---------------------------------------------------------------- init
+  try { $('#version').textContent = 'v' + chrome.runtime.getManifest().version; } catch (_) {}
   loadSettings();
   refreshTab();
   updateSelectionUi();

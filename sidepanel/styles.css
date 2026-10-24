@@ -47,7 +47,6 @@ body {
     radial-gradient(600px 300px at 0% -10%, rgba(45, 212, 191, 0.12), transparent 60%),
     radial-gradient(600px 320px at 110% 0%, rgba(139, 92, 246, 0.16), transparent 60%),
     var(--bg);
-  background-attachment: fixed;
   color: var(--text);
   font: 13px/1.45 -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -76,7 +75,7 @@ button { font: inherit; color: inherit; }
 .icon-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 #dPlay svg { fill: currentColor; stroke: none; }
 
-.card-surface { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); backdrop-filter: blur(12px); }
+.card-surface { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 
 /* ---------- target ---------- */
 .target { display: flex; align-items: center; gap: 10px; padding: 10px 12px; }
@@ -187,15 +186,17 @@ select { width: auto; padding: 7px 8px; cursor: pointer; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
 .card {
   position: relative; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border);
-  overflow: hidden; cursor: pointer; transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+  overflow: hidden; cursor: pointer; transition: border-color 0.2s, box-shadow 0.2s;
   animation: pop 0.35s cubic-bezier(.2, .9, .3, 1.2) both;
+  /* skip layout/paint for off-screen cards; isolate each card's (animated) subtree */
+  content-visibility: auto; contain-intrinsic-size: auto 240px; contain: layout paint style;
 }
-.card:hover { transform: translateY(-2px); border-color: var(--border-2); box-shadow: 0 12px 28px -16px rgba(0, 0, 0, 0.6); }
+.card:hover { border-color: var(--border-2); box-shadow: 0 12px 28px -16px rgba(0, 0, 0, 0.6); }
 .card.selected { border-color: rgba(45, 212, 191, 0.55); box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.35), 0 10px 26px -14px rgba(45, 212, 191, 0.5); }
 @keyframes pop { from { opacity: 0; transform: translateY(8px) scale(0.96); } to { opacity: 1; transform: none; } }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
-.preview { aspect-ratio: 1; background: var(--preview-bg); display: grid; place-items: center; position: relative; overflow: hidden; }
+.preview { aspect-ratio: 1; background: var(--preview-bg); display: grid; place-items: center; position: relative; overflow: hidden; contain: strict; }
 .checker .preview, .stage.checker {
   background-color: var(--check-b);
   background-image: linear-gradient(45deg, var(--check-a) 25%, transparent 25%, transparent 75%, var(--check-a) 75%),
@@ -208,11 +209,11 @@ select { width: auto; padding: 7px 8px; cursor: pointer; }
 .preview .err { color: var(--faint); font-size: 11px; text-align: center; padding: 10px; }
 
 .card .sel { position: absolute; top: 8px; left: 8px; z-index: 2; padding: 2px; border-radius: 8px; }
-.card .sel .box { background: rgba(0, 0, 0, 0.35); border-color: rgba(255, 255, 255, 0.45); backdrop-filter: blur(4px); }
+.card .sel .box { background: rgba(10, 12, 20, 0.6); border-color: rgba(255, 255, 255, 0.45); }
 .card.selected .sel .box { background: var(--grad); }
 .badge {
   position: absolute; top: 8px; right: 8px; z-index: 2; font-size: 9.5px; font-weight: 800; letter-spacing: 0.05em;
-  padding: 2px 6px; border-radius: 6px; text-transform: uppercase; background: rgba(0, 0, 0, 0.45); color: #fff; backdrop-filter: blur(4px);
+  padding: 2px 6px; border-radius: 6px; text-transform: uppercase; background: rgba(10, 12, 20, 0.7); color: #fff;
 }
 .badge.runtime { background: rgba(139, 92, 246, 0.85); }
 .badge.network { background: rgba(45, 212, 191, 0.85); color: #04201c; }
@@ -230,7 +231,7 @@ select { width: auto; padding: 7px 8px; cursor: pointer; }
 .card:hover .quick { opacity: 1; transform: none; }
 .quick button {
   width: 28px; height: 28px; border-radius: 8px; border: 0; cursor: pointer; display: grid; place-items: center;
-  background: rgba(0, 0, 0, 0.55); color: #fff; backdrop-filter: blur(6px);
+  background: rgba(10, 12, 20, 0.78); color: #fff;
 }
 .quick button:hover { background: var(--violet); }
 .quick svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
@@ -257,8 +258,8 @@ select { width: auto; padding: 7px 8px; cursor: pointer; }
 .dock {
   position: fixed; left: 10px; right: 10px; bottom: 10px; z-index: 10;
   display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 10px 10px 14px;
-  border-radius: 16px; background: color-mix(in srgb, var(--bg-2) 82%, transparent);
-  border: 1px solid var(--border-2); backdrop-filter: blur(18px) saturate(1.4);
+  border-radius: 16px; background: color-mix(in srgb, var(--bg-2) 96%, transparent);
+  border: 1px solid var(--border-2);
   box-shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.6); animation: rise 0.3s ease;
 }
 .dock-info { display: flex; flex-direction: column; min-width: 0; }
@@ -288,6 +289,7 @@ dialog::backdrop { background: rgba(5, 6, 12, 0.55); backdrop-filter: blur(4px);
 .meta small { display: block; color: var(--faint); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
 .meta span { font-weight: 600; font-variant-numeric: tabular-nums; }
 .sources { padding: 10px 12px 0; display: flex; flex-direction: column; gap: 4px; }
+.sources .src.note { color: var(--teal); font-family: inherit; }
 .sources .src { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--muted); word-break: break-all; }
 .sources .tags { display: flex; gap: 5px; flex-wrap: wrap; }
 .sheet-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px; }

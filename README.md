@@ -18,7 +18,7 @@ As clean JSON, original `.lottie` files, or one ZIP.
 </p>
 
 <p>
-  <a href="https://github.com/Neelanjan-chakraborty/LottieScrapper/releases/latest/download/lottie-scraper-v1.0.0.zip"><img src="https://img.shields.io/badge/⬇%20Download%20v1.0.0-14b8a6?style=for-the-badge" alt="Download" /></a>
+  <a href="https://github.com/Neelanjan-chakraborty/LottieScrapper/releases/latest/download/lottie-scraper-v1.1.0.zip"><img src="https://img.shields.io/badge/⬇%20Download%20v1.1.0-14b8a6?style=for-the-badge" alt="Download" /></a>
   &nbsp;
   <a href="#-installation"><img src="https://img.shields.io/badge/📖%20Install%20Guide-8b5cf6?style=for-the-badge" alt="Install guide" /></a>
   &nbsp;
@@ -116,7 +116,7 @@ As clean JSON, original `.lottie` files, or one ZIP.
 
 ### Option A: Download the release (recommended)
 
-1. Download **[`lottie-scraper-v1.0.0.zip`](https://github.com/Neelanjan-chakraborty/LottieScrapper/releases/latest)** from the latest release and unzip it.
+1. Download **[`lottie-scraper-v1.1.0.zip`](https://github.com/Neelanjan-chakraborty/LottieScrapper/releases/latest)** from the latest release and unzip it.
 2. Open `chrome://extensions` (or `edge://extensions` / `brave://extensions`).
 3. Turn on **Developer mode** (top-right).
 4. Click **Load unpacked** and select the unzipped folder.
@@ -185,6 +185,8 @@ flowchart LR
 | **DOM collector** | `src`, `data-src`, `data-animation-path`, Webflow `data-animation-type="lottie"`, Elementor `data-settings`, preload links and the `performance` resource timeline |
 | **Text carving** (`shared/extract.js`) | `.json` / `.lottie` URLs (also HTML-entity and `\/`-escaped forms), balanced-brace extraction of inline objects, webpack `JSON.parse('…')`, minified literals such as `{v:"5.7",fr:30,…,hd:!0}`, and double-encoded JSON |
 | **Network capture** (`background.js`) | Every JSON or `.lottie` response the tab receives, recorded by content type |
+
+**Faithful exports.** Players such as lottie-web rewrite animation data in memory after loading it. They make path tangents absolute, attach precomp layers and add internal flags, so saving that data directly would distort shapes. Lottie Scraper prefers the untouched source: hook captures, or the original file re-fetched from its URL. When only the player's copy exists, `restoreLottie()` reverses those edits exactly, and tests check that the result is byte-for-byte identical to the original.
 
 Every candidate is **fetched and checked**. It must be an object with `layers[]`, `fr`, `ip` and `op`, or a dotLottie archive. Results are **deduplicated by fingerprint**, which keeps the cleanest copy.
 
@@ -287,6 +289,12 @@ Chrome doesn't let extensions run on `chrome://` pages, the Chrome Web Store or 
 <summary><b>An animation plays on the site but wasn't found.</b></summary>
 
 Some sites load animations only when you scroll or interact. Scroll through the page, then scan again in **Deep** mode. Animations caught by the runtime hook require the page to have loaded *after* the extension was installed, so reload the tab once.
+</details>
+
+<details>
+<summary><b>Is it fast with hundreds of animations?</b></summary>
+
+Yes. Previews are built one at a time during idle time, only on-screen cards play, at most 32 players exist at once, and off-screen cards skip rendering (`content-visibility`). Animations are kept as compact JSON strings, not object graphs. In a benchmark of 216 animations (27 layers each at 1100×1100), scrolling runs at a steady 60 fps with zero long tasks; v1.0.0 averaged 3 fps on the same test.
 </details>
 
 <details>

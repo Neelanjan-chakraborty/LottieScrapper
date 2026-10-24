@@ -37,9 +37,7 @@
   const sanitize = (s) => (s || '').replace(/[\\/:*?"<>|\x00-\x1f]+/g, '-').replace(/\s+/g, ' ').replace(/^[.\s-]+|[.\s-]+$/g, '').slice(0, 80);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-  function displayName(item, idx) {
-    return sanitize(item.baseName) || sanitize(item.meta.name) || `animation-${idx + 1}`;
-  }
+  const nameFor = (item, idx) => sanitize(item.baseName) || sanitize(item.meta.name) || `animation-${idx + 1}`;
 
   function primarySource(item) {
     if (item.dotLottie) return ['dotlottie', '.lottie'];
@@ -122,24 +120,87 @@
   chrome.tabs.onUpdated.addListener((id, info) => {
     if (id === state.tab?.id && (info.status === 'complete' || info.title || info.favIconUrl)) refreshTab();
   });
-  setInterval(() => { if (state.tab) refreshTab(); }, 4000);
+  setInterval(() => { if (state.tab && !document.hidden) refreshTab(); }, 4000);
 
   // ---------------------------------------------------------------- previews
-  const players = new Map(); // id -> lottie AnimationItem
-  const io = new IntersectionObserver((entries) => {
+  // Preview pool: performance + memory
+  //  * cards near the viewport get a player, built one per idle slot (no long tasks while scrolling)
+  //  * only cards actually on screen play; everything else is paused
+  //  * at most MAX_LIVE players exist; the least-recently-seen off-screen ones are destroyed
+  //  * each player parses its own copy from the item's JSON string (no retained object graphs)
+  //  * thumbnails render at the animation's authored frame rate (no sub-frame interpolation)
+  const MAX_LIVE = 32;
+  const players = new Map(); // id -> { anim, lastSeen }
+  const onScreen = new Set();
+  const mountQueue = [];
+  let mountScheduled = false;
+  let gridPaused = false; // while the detail sheet covers the grid
+
+  const nearIO = new IntersectionObserver((entries) => {
     for (const e of entries) {
       const id = e.target.dataset.id;
-      if (e.isIntersecting) mountPreview(e.target, id);
-      else unmountPreview(id, e.target);
+      if (e.isIntersecting) queueMount(id);
+      else {
+        const i = mountQueue.indexOf(id);
+        if (i !== -1) mountQueue.splice(i, 1);
+      }
     }
-  }, { rootMargin: '150px' });
+  }, { rootMargin: '400px 0px' });
+
+  const visIO = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      const id = e.target.dataset.id;
+      if (e.isIntersecting) onScreen.add(id); else onScreen.delete(id);
+      const p = players.get(id);
+      if (p) { p.lastSeen = performance.now(); applyPlayState(id, p); }
+    }
+  }, { rootMargin: '0px' });
+
+  const idle = window.requestIdleCallback
+    ? (cb, opts) => window.requestIdleCallback(cb, opts)
+    : (cb) => setTimeout(() => cb({ didTimeout: true, timeRemaining: () => 8 }), 16);
+
+  function queueMount(id) {
+    if (players.has(id) || mountQueue.includes(id)) return;
+    // visible cards first
+    if (onScreen.has(id)) mountQueue.unshift(id); else mountQueue.push(id);
+    if (!mountScheduled) { mountScheduled = true; idle(pumpMounts, { timeout: 120 }); }
+  }
+
+  function pumpMounts(deadline) {
+    mountScheduled = false;
+    let budget = 2; // at most two builds per idle slot keeps frames under 16ms
+    while (mountQueue.length && budget-- > 0 && (deadline.didTimeout || deadline.timeRemaining() > 4)) {
+      const id = mountQueue.shift();
+      const card = cardById.get(id);
+      if (card && card.isConnected && !card.hidden) mountPreview(card, id);
+    }
+    if (mountQueue.length) { mountScheduled = true; idle(pumpMounts, { timeout: 120 }); }
+  }
+
+  function applyPlayState(id, p) {
+    if (!p.ready) return;
+    const shouldPlay = state.settings.autoplay && !gridPaused && !document.hidden && onScreen.has(id);
+    if (shouldPlay) { if (p.anim.isPaused) p.anim.play(); }
+    else if (!p.anim.isPaused || !p.posed) {
+      if (state.settings.autoplay && p.posed) p.anim.pause();
+      else { p.anim.goToAndStop(Math.floor(p.anim.totalFrames / 2), true); p.posed = true; }
+    }
+  }
+
+  function evictIfNeeded() {
+    if (players.size <= MAX_LIVE) return;
+    const off = [...players.entries()].filter(([id]) => !onScreen.has(id)).sort((a, b) => a[1].lastSeen - b[1].lastSeen);
+    while (players.size > MAX_LIVE && off.length) unmountPreview(off.shift()[0]);
+  }
 
   function mountPreview(card, id) {
     if (players.has(id)) return;
-    const item = state.items.find((i) => i.id === id);
+    const item = itemById.get(id);
     if (!item) return;
-    const holder = $('.preview', card);
+    const holder = card.querySelector('.preview');
     holder.querySelector('.anim')?.remove();
+    holder.querySelector('.err')?.remove();
     const box = document.createElement('div');
     box.className = 'anim';
     holder.appendChild(box);
@@ -149,16 +210,21 @@
         renderer: 'svg',
         loop: true,
         autoplay: false,
-        animationData: structuredClone(item.data),
-        rendererSettings: { preserveAspectRatio: 'xMidYMid meet', progressiveLoad: true }
+        animationData: JSON.parse(item.json),
+        rendererSettings: { preserveAspectRatio: 'xMidYMid meet', progressiveLoad: true, hideOnTransparent: true }
       });
+      anim.setSubframe(false);
+      const p = { anim, lastSeen: performance.now(), ready: false, posed: false };
+      players.set(id, p);
       anim.addEventListener('DOMLoaded', () => {
+        p.ready = true;
         holder.querySelector('.loading')?.remove();
-        if (state.settings.autoplay) anim.play();
-        else anim.goToAndStop(Math.floor(anim.totalFrames / 2), true);
+        anim.goToAndStop(Math.floor(anim.totalFrames / 2), true);
+        p.posed = true;
+        applyPlayState(id, p);
       });
       anim.addEventListener('data_failed', () => showPreviewError(holder));
-      players.set(id, anim);
+      evictIfNeeded();
     } catch (_) {
       showPreviewError(holder);
     }
@@ -169,20 +235,32 @@
     if (!holder.querySelector('.err')) holder.insertAdjacentHTML('beforeend', '<div class="err">Preview unavailable<br>(export still works)</div>');
   }
   function unmountPreview(id) {
-    const anim = players.get(id);
-    if (anim) { try { anim.destroy(); } catch (_) {} players.delete(id); }
-  }
-  function refreshPlayback() {
-    for (const anim of players.values()) {
-      if (state.settings.autoplay) anim.play();
-      else anim.goToAndStop(Math.floor(anim.totalFrames / 2), true);
+    const p = players.get(id);
+    if (!p) return;
+    try { p.anim.destroy(); } catch (_) {}
+    players.delete(id);
+    const holder = cardById.get(id)?.querySelector('.preview');
+    if (holder) {
+      holder.querySelector('.anim')?.remove();
+      if (!holder.querySelector('.loading')) holder.insertAdjacentHTML('afterbegin', '<div class="loading"></div>');
     }
   }
+  function remountPreview(id) {
+    unmountPreview(id);
+    if (cardById.has(id)) queueMount(id);
+  }
+  function refreshPlayback() {
+    for (const [id, p] of players) applyPlayState(id, p);
+  }
+  document.addEventListener('visibilitychange', refreshPlayback);
 
   // ---------------------------------------------------------------- grid
   const grid = $('#grid');
+  const itemById = new Map();
+  const cardById = new Map();
+  const displayName = (item) => item.name;
 
-  function cardHtml(item, idx) {
+  function cardHtml(item) {
     const [cls, label] = primarySource(item);
     const m = item.meta;
     return `
@@ -194,70 +272,94 @@
         <button data-act="download" title="Download JSON"><svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg></button>
       </div>
       <div class="info">
-        <div class="name" title="${esc(displayName(item, idx))}">${esc(displayName(item, idx))}</div>
-        <div class="facts"><span>${m.width}×${m.height} · ${m.fps}fps</span><span>${fmtDur(m.duration)} · ${fmtBytes(item.size)}</span></div>
+        <div class="name" title="${esc(item.name)}">${esc(item.name)}</div>
+        <div class="facts"><span>${m.width}×${m.height} · ${m.fps}fps</span><span class="sz">${fmtDur(m.duration)} · ${fmtBytes(item.size)}</span></div>
       </div>`;
   }
 
-  function addCard(item) {
-    const idx = state.items.indexOf(item);
-    const card = document.createElement('div');
-    card.className = 'card' + (state.selected.has(item.id) ? ' selected' : '');
-    card.dataset.id = item.id;
-    card.innerHTML = cardHtml(item, idx);
-    grid.appendChild(card);
-    io.observe(card);
-    if (!matchesFilter(item)) card.hidden = true;
-    return card;
+  // Cards arrive in bursts during a scan; build them in one fragment per frame.
+  const pendingCards = [];
+  let cardsScheduled = false;
+  function enqueueCard(item) {
+    pendingCards.push(item);
+    if (!cardsScheduled) { cardsScheduled = true; requestAnimationFrame(flushCards); }
   }
+  function flushCards() {
+    cardsScheduled = false;
+    const frag = document.createDocumentFragment();
+    const built = [];
+    for (const item of pendingCards.splice(0)) {
+      const card = document.createElement('div');
+      card.className = 'card' + (state.selected.has(item.id) ? ' selected' : '');
+      card.dataset.id = item.id;
+      card.innerHTML = cardHtml(item);
+      if (!matchesFilter(item)) card.hidden = true;
+      cardById.set(item.id, card);
+      built.push(card);
+      frag.appendChild(card);
+    }
+    grid.appendChild(frag); // empties the fragment — observe from `built`
+    for (const card of built) observeCard(card);
+    updateSelectionUi();
+  }
+  function observeCard(card) { nearIO.observe(card); visIO.observe(card); }
 
-  function updateCard(item) {
-    const card = grid.querySelector(`.card[data-id="${item.id}"]`);
+  function updateCard(item, how) {
+    const card = cardById.get(item.id);
     if (!card) return;
     const [cls, label] = primarySource(item);
-    const b = $('.badge', card);
+    const b = card.querySelector('.badge');
     b.className = 'badge ' + cls;
     b.textContent = label;
+    if (how === 'replaced') {
+      card.querySelector('.sz').textContent = `${fmtDur(item.meta.duration)} · ${fmtBytes(item.size)}`;
+      if (players.has(item.id)) remountPreview(item.id);
+      scheduleSelectionUi();
+    }
   }
 
   function matchesFilter(item) {
-    const q = state.filter.trim().toLowerCase();
+    const q = state.filter;
     if (!q) return true;
-    const idx = state.items.indexOf(item);
-    return [displayName(item, idx), item.url, item.meta.name, item.sources.join(' '), `${item.meta.width}x${item.meta.height}`]
-      .some((s) => (s || '').toLowerCase().includes(q));
+    if (!item.haystack) item.haystack = [item.name, item.url, item.meta.name, item.sources.join(' '), `${item.meta.width}x${item.meta.height}`].join('\n').toLowerCase();
+    return item.haystack.includes(q);
   }
 
   function visibleItems() {
-    return state.items.filter(matchesFilter);
+    return state.filter ? state.items.filter(matchesFilter) : state.items;
   }
 
   function applyFilterSort() {
     const order = [...state.items];
     const by = {
-      found: () => 0,
-      name: (a, b) => displayName(a, state.items.indexOf(a)).localeCompare(displayName(b, state.items.indexOf(b))),
+      name: (a, b) => a.name.localeCompare(b.name),
       size: (a, b) => b.size - a.size,
       duration: (a, b) => b.meta.duration - a.meta.duration,
       layers: (a, b) => b.meta.layers - a.meta.layers
     }[state.sort];
-    if (state.sort !== 'found') order.sort(by);
+    if (by) order.sort(by);
+    const frag = document.createDocumentFragment();
     for (const item of order) {
-      const card = grid.querySelector(`.card[data-id="${item.id}"]`);
+      const card = cardById.get(item.id);
       if (!card) continue;
       card.hidden = !matchesFilter(item);
-      grid.appendChild(card);
+      frag.appendChild(card);
     }
+    grid.appendChild(frag);
     updateSelectionUi();
   }
 
-  $('#search').addEventListener('input', (e) => { state.filter = e.target.value; applyFilterSort(); });
+  let searchTimer;
+  $('#search').addEventListener('input', (e) => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { state.filter = e.target.value.trim().toLowerCase(); applyFilterSort(); }, 120);
+  });
   $('#sort').addEventListener('change', (e) => { state.sort = e.target.value; applyFilterSort(); });
 
   grid.addEventListener('click', async (e) => {
     const card = e.target.closest('.card');
     if (!card) return;
-    const item = state.items.find((i) => i.id === card.dataset.id);
+    const item = itemById.get(card.dataset.id);
     if (!item) return;
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (act === 'copy') return copyJson(item);
@@ -266,31 +368,39 @@
     openDetail(item);
   });
 
-  function toggleSelect(id, force) {
+  function toggleSelect(id, force, deferUi) {
     const on = force ?? !state.selected.has(id);
     if (on) state.selected.add(id); else state.selected.delete(id);
-    grid.querySelector(`.card[data-id="${id}"]`)?.classList.toggle('selected', on);
-    updateSelectionUi();
+    cardById.get(id)?.classList.toggle('selected', on);
+    if (!deferUi) scheduleSelectionUi();
   }
 
   $('#selectAll').addEventListener('change', (e) => {
-    const vis = visibleItems();
-    vis.forEach((i) => toggleSelect(i.id, e.target.checked));
+    for (const i of visibleItems()) toggleSelect(i.id, e.target.checked, true);
+    updateSelectionUi();
   });
+
+  let selUiScheduled = false;
+  function scheduleSelectionUi() {
+    if (selUiScheduled) return;
+    selUiScheduled = true;
+    requestAnimationFrame(() => { selUiScheduled = false; updateSelectionUi(); });
+  }
 
   function updateSelectionUi() {
     const vis = visibleItems();
-    const selVisible = vis.filter((i) => state.selected.has(i.id)).length;
+    let selVisible = 0;
+    for (const i of vis) if (state.selected.has(i.id)) selVisible++;
+    let selCount = 0, size = 0;
+    for (const i of state.items) if (state.selected.has(i.id)) { selCount++; size += i.size; }
     const all = $('#selectAll');
     all.checked = vis.length > 0 && selVisible === vis.length;
     all.indeterminate = selVisible > 0 && selVisible < vis.length;
     $('#countLabel').textContent = `${state.items.length} found`;
-    const sel = state.items.filter((i) => state.selected.has(i.id));
-    const size = sel.reduce((s, i) => s + i.size, 0);
-    $('#selCount').textContent = `${sel.length} selected`;
-    $('#selSize').textContent = sel.length ? `≈ ${fmtBytes(size)} of JSON` : 'Select animations to export';
-    $('#btnZip').disabled = !sel.length;
-    $('#btnJson').disabled = !sel.length;
+    $('#selCount').textContent = `${selCount} selected`;
+    $('#selSize').textContent = selCount ? `≈ ${fmtBytes(size)} of JSON` : 'Select animations to export';
+    $('#btnZip').disabled = !selCount;
+    $('#btnJson').disabled = !selCount;
     $('#toolbar').hidden = !state.items.length;
     $('#dock').hidden = !state.items.length;
     $('#empty').hidden = !!state.items.length || !!state.scanCtrl;
@@ -302,8 +412,14 @@
 
   function resetResults() {
     for (const id of [...players.keys()]) unmountPreview(id);
-    io.disconnect();
-    grid.innerHTML = '';
+    nearIO.disconnect();
+    visIO.disconnect();
+    onScreen.clear();
+    mountQueue.length = 0;
+    pendingCards.length = 0;
+    grid.textContent = '';
+    itemById.clear();
+    cardById.clear();
     state.items = [];
     state.selected.clear();
   }
@@ -331,18 +447,22 @@
       const { items, stats } = await LottieScanner.scan(tab, state.settings, {
         signal: state.scanCtrl.signal,
         onProgress: setProgress,
-        onFound: (item, merged) => {
-          if (merged) return updateCard(item);
+        onFound: (item, how) => {
+          if (how) return updateCard(item, how);
+          item.name = nameFor(item, state.items.length);
           state.items.push(item);
+          itemById.set(item.id, item);
           state.selected.add(item.id);
-          addCard(item);
-          updateSelectionUi();
+          enqueueCard(item);
         }
       });
+      if (stats.hookMissing && items.some((i) => i.restored)) {
+        toast('Tip: reload the page once so Lottie Scraper can capture original files directly');
+      }
       const msg = items.length
         ? `Found ${items.length} animation${items.length === 1 ? '' : 's'}`
         : 'No Lottie animations found';
-      toast(stats.errors && items.length ? `${msg} · ${stats.errors} URL(s) skipped` : msg);
+      if (!(stats.hookMissing && items.some((i) => i.restored))) toast(stats.errors && items.length ? `${msg} · ${stats.errors} URL(s) skipped` : msg);
       if (!items.length) {
         showEmpty('', 'No Lottie animations found', state.settings.mode === 'quick'
           ? 'Try Deep mode to dig through script bundles and every JSON response, or Crawl to check linked pages.'
@@ -366,7 +486,16 @@
     }
   }
 
-  function setProgress({ pct, phase, detail, stats }) {
+  // Progress can fire hundreds of times per second; paint at most once per frame.
+  let progressState = null;
+  let progressScheduled = false;
+  function setProgress(st) {
+    progressState = st;
+    if (progressScheduled) return;
+    progressScheduled = true;
+    requestAnimationFrame(() => { progressScheduled = false; paintProgress(progressState); });
+  }
+  function paintProgress({ pct, phase, detail, stats }) {
     const p = Math.round(pct);
     $('#fill').style.width = p + '%';
     $('#pct').textContent = p + '%';
@@ -389,9 +518,12 @@
   }
 
   // ---------------------------------------------------------------- export helpers
+  // Fast path: the stored JSON string is already the minified export.
   async function prepareJson(item, signal) {
-    let data = structuredClone(item.data);
-    if (state.settings.embedImages) {
+    const needsImages = state.settings.embedImages && item.meta.images > item.meta.embeddedImages;
+    if (!needsImages && state.settings.minify) return item.json;
+    let data = JSON.parse(item.json);
+    if (needsImages) {
       const base = item.url && !item.url.startsWith('data:') ? item.url : item.pageUrl;
       data = await LottieScanner.embedAssets(data, base, signal);
     }
@@ -417,7 +549,7 @@
   async function downloadJson(item) {
     try {
       const json = await prepareJson(item);
-      await download(new Blob([json], { type: 'application/json' }), `${displayName(item, state.items.indexOf(item))}.json`);
+      await download(new Blob([json], { type: 'application/json' }), `${item.name}.json`);
       toast('Downloading JSON');
     } catch (e) {
       toast('Download failed: ' + e.message);
@@ -445,6 +577,7 @@
 
   // ---------------------------------------------------------------- ZIP export
   function showExport(pct, title, detail) {
+    if ($('#exportOverlay').hidden) { gridPaused = true; refreshPlayback(); }
     $('#exportOverlay').hidden = false;
     const p = Math.max(0, Math.min(100, Math.round(pct)));
     $('#exportPct').textContent = p + '%';
@@ -468,7 +601,7 @@
       for (let i = 0; i < items.length; i++) {
         if (signal.aborted) throw new LottieScanner.Cancelled();
         const item = items[i];
-        const base = displayName(item, state.items.indexOf(item));
+        const base = item.name;
         showExport((i / steps) * 100, `Packing ${items.length} animation${items.length === 1 ? '' : 's'}…`, base);
         const file = 'json/' + nameJson(base, '.json');
         await zip.add(file, await prepareJson(item, signal));
@@ -496,7 +629,7 @@
       toast(e instanceof LottieScanner.Cancelled || signal.aborted ? 'Export cancelled' : 'Export failed: ' + e.message);
     } finally {
       state.exportCtrl = null;
-      setTimeout(() => { $('#exportOverlay').hidden = true; }, 500);
+      setTimeout(() => { $('#exportOverlay').hidden = true; gridPaused = dlg.open; refreshPlayback(); }, 500);
     }
   });
 
@@ -511,7 +644,7 @@
       for (let i = 0; i < items.length; i++) {
         if (signal.aborted) throw new LottieScanner.Cancelled();
         const item = items[i];
-        const base = displayName(item, state.items.indexOf(item));
+        const base = item.name;
         showExport((i / items.length) * 100, `Saving ${items.length} JSON file(s)…`, base);
         await download(new Blob([await prepareJson(item, signal)], { type: 'application/json' }), `${folder}/${namer(base, '.json')}`);
       }
@@ -521,7 +654,7 @@
       toast(e instanceof LottieScanner.Cancelled || signal.aborted ? 'Export cancelled' : 'Export failed: ' + e.message);
     } finally {
       state.exportCtrl = null;
-      setTimeout(() => { $('#exportOverlay').hidden = true; }, 500);
+      setTimeout(() => { $('#exportOverlay').hidden = true; gridPaused = dlg.open; refreshPlayback(); }, 500);
     }
   });
 
@@ -535,9 +668,8 @@
 
   function openDetail(item) {
     detailItem = item;
-    const idx = state.items.indexOf(item);
     const m = item.meta;
-    $('#dTitle').textContent = displayName(item, idx);
+    $('#dTitle').textContent = item.name;
     const stage = $('#dStage');
     stage.innerHTML = '<div class="anim"></div>';
     stage.style.aspectRatio = m.width && m.height ? `${m.width} / ${m.height}` : '1';
@@ -549,24 +681,32 @@
     $('#dMeta').innerHTML = cells.map(([k, v]) => `<div class="meta"><small>${esc(k)}</small><span>${esc(v)}</span></div>`).join('');
     $('#dSources').innerHTML =
       `<div class="tags">${item.sources.map((s) => `<span class="chip">${esc(s)}</span>`).join('')}</div>` +
-      (item.url ? `<div class="src">${esc(item.url.startsWith('data:') ? item.url.slice(0, 60) + '…' : item.url)}</div>` : '<div class="src">Embedded in page — no standalone URL</div>');
+      (item.url ? `<div class="src">${esc(item.url.startsWith('data:') ? item.url.slice(0, 60) + '…' : item.url)}</div>` : '<div class="src">Embedded in page — no standalone URL</div>') +
+      (item.restored ? '<div class="src note">Recovered from the live player and restored to its original path data.</div>' : '');
     $('#dDotLottie').hidden = !item.dotLottie;
     $('#dLocate').hidden = !item.elementId || state.scannedTab?.id !== state.tab?.id;
     $('#dOpen').hidden = !item.url || item.url.startsWith('data:');
     $('#dSpeed').textContent = '1×';
     dlg.showModal();
+    gridPaused = true; // the sheet covers the grid — stop spending frames on it
+    refreshPlayback();
 
     detailAnim?.destroy();
     try {
       detailAnim = lottie.loadAnimation({
         container: $('.anim', stage), renderer: 'svg', loop: true, autoplay: true,
-        animationData: structuredClone(item.data)
+        animationData: JSON.parse(item.json)
       });
       const scrub = $('#dScrub');
       detailAnim.addEventListener('DOMLoaded', () => { scrub.max = Math.max(0, Math.floor(detailAnim.totalFrames) - 1); });
+      const frameLabel = $('#dFrame');
+      let lastFrame = -1;
       detailAnim.addEventListener('enterFrame', () => {
-        scrub.value = Math.floor(detailAnim.currentFrame);
-        $('#dFrame').textContent = `${Math.floor(detailAnim.currentFrame)} / ${Math.floor(detailAnim.totalFrames)}`;
+        const f = Math.floor(detailAnim.currentFrame);
+        if (f === lastFrame) return; // only touch the DOM when the frame number changes
+        lastFrame = f;
+        scrub.value = f;
+        frameLabel.textContent = `${f} / ${Math.floor(detailAnim.totalFrames)}`;
       });
       setPlayIcon(true);
     } catch (_) {
@@ -618,7 +758,13 @@
       toast('Could not reach the page');
     }
   });
-  dlg.addEventListener('close', () => { detailAnim?.destroy(); detailAnim = null; });
+  dlg.addEventListener('close', () => {
+    detailAnim?.destroy();
+    detailAnim = null;
+    $('#dStage').textContent = '';
+    gridPaused = false;
+    refreshPlayback();
+  });
 
   // generic close buttons / backdrop click
   $$('dialog').forEach((d) => {

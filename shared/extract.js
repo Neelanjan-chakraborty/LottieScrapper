@@ -64,6 +64,94 @@
     return value;
   }
 
+  // ---------- undo lottie-web's in-place "completeData" ----------
+  // When lottie-web loads an animation it rewrites the data in place:
+  //   * every path's in/out tangents become absolute (i += v, o += v) in shape
+  //     layers, masks and font glyphs — re-exporting that data distorts shapes;
+  //   * precomp layers get `layers` attached, layers get `completed: true`,
+  //     the root gets `__complete: true`, glyphs get default transforms.
+  // `restoreLottie` reverses exactly those steps so the export matches the original file.
+  function relPath(p) {
+    if (!p || !Array.isArray(p.v) || !Array.isArray(p.i) || !Array.isArray(p.o)) return;
+    for (let n = 0; n < p.v.length; n++) {
+      const v = p.v[n], i = p.i[n], o = p.o[n];
+      if (!v || !i || !o) continue;
+      i[0] -= v[0]; i[1] -= v[1];
+      o[0] -= v[0]; o[1] -= v[1];
+    }
+  }
+  function relProp(k) {
+    if (!k) return;
+    if (k.i) return relPath(k);
+    if (!Array.isArray(k)) return;
+    for (const kf of k) {
+      if (kf && kf.s) relPath(kf.s[0]);
+      if (kf && kf.e) relPath(kf.e[0]);
+    }
+  }
+  function relShapes(arr) {
+    if (!Array.isArray(arr)) return;
+    for (const s of arr) {
+      if (!s) continue;
+      if (s.ty === 'sh' && s.ks) relProp(s.ks.k);
+      else if (s.ty === 'gr') relShapes(s.it);
+    }
+  }
+  function stripInternal(o) {
+    if (!o || typeof o !== 'object') return;
+    if (Array.isArray(o)) { for (const v of o) stripInternal(v); return; }
+    for (const k of Object.keys(o)) {
+      // lottie-web's runtime bookkeeping: `completed`, `__complete`, `__used`, `_render`, …
+      // (the Lottie schema has no keys starting with an underscore)
+      if (k === 'completed' || k.charCodeAt(0) === 95) delete o[k];
+      else stripInternal(o[k]);
+    }
+  }
+  // Returns true when the data had been modified by a player and was repaired.
+  function restoreLottie(data) {
+    if (!isLottie(data)) return false;
+    const seen = new Set();
+    let touched = !!data.__complete;
+    const fixLayers = (layers) => {
+      if (!Array.isArray(layers)) return;
+      for (const l of layers) {
+        if (!l || seen.has(l)) continue;
+        seen.add(l);
+        if (l.ty === 0 && l.refId && Array.isArray(l.layers)) delete l.layers;
+        if (!l.completed) continue;
+        touched = true;
+        if (l.hasMask && Array.isArray(l.masksProperties)) for (const m of l.masksProperties) if (m && m.pt) relProp(m.pt.k);
+        if (l.ty === 4) relShapes(l.shapes);
+      }
+    };
+    fixLayers(data.layers);
+    for (const a of data.assets || []) if (a && Array.isArray(a.layers)) fixLayers(a.layers);
+    // Glyph shapes are completed once per file (only flagged by `__complete`),
+    // and only for files exported by bodymovin >= 4.7.99.
+    const ver = String(data.v || '100').split('.').map((n) => parseInt(n, 10) || 0);
+    const glyphsCompleted = ver[0] > 4 || (ver[0] === 4 && (ver[1] > 7 || (ver[1] === 7 && (ver[2] || 0) >= 99)));
+    const DEFAULT_KS = '{"p":{"k":[0,0],"a":0},"s":{"k":[100,100],"a":0},"a":{"k":[0,0],"a":0},"r":{"k":0,"a":0},"o":{"k":100,"a":0}}';
+    if (data.__complete && glyphsCompleted && Array.isArray(data.chars)) {
+      for (const ch of data.chars) {
+        const d = ch && ch.data;
+        if (!d) continue;
+        if (Array.isArray(d.layers) && d.refId) delete d.layers;
+        if (!Array.isArray(d.shapes)) continue;
+        relShapes(d.shapes);
+        if (!ch.t) {
+          const last = d.shapes[d.shapes.length - 1];
+          if (last && last.ty === 'no') d.shapes.pop();
+          const it = d.shapes[0] && d.shapes[0].it;
+          if (Array.isArray(it) && it.length > 1 && it[it.length - 1].ty === 'tr' && it[it.length - 2].ty === 'tr') it.pop();
+        }
+        if (d.ip === 0 && d.op === 99999 && d.st === 0 && d.sr === 1) { delete d.ip; delete d.op; delete d.st; delete d.sr; }
+        if (d.ks && JSON.stringify(d.ks) === DEFAULT_KS) delete d.ks;
+      }
+    }
+    stripInternal(data);
+    return touched;
+  }
+
   // ---------- text helpers ----------
   function decodeEntities(s) {
     if (s.indexOf('&') === -1) return s;
@@ -294,7 +382,7 @@
   }
 
   const api = {
-    isLottie, findLotties, fingerprint, meta, cleanReplacer,
+    isLottie, findLotties, fingerprint, meta, cleanReplacer, restoreLottie,
     decodeEntities, resolveUrl, harvestUrls, urlScore,
     carveInline, parseLoose, jsToJson, scanText
   };

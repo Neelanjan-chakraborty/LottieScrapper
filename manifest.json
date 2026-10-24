@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Lottie Scraper",
   "short_name": "Lottie Scraper",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Detect, preview and bulk-download every Lottie animation on a page as JSON, .lottie or a single ZIP.",
   "author": "Neelanjan Chakraborty",
   "homepage_url": "https://github.com/Neelanjan-chakraborty/LottieScrapper",

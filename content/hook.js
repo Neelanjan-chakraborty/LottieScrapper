@@ -5,7 +5,9 @@
   const KEY = Symbol.for('__lottie_scraper__');
   if (window[KEY]) return;
 
-  const store = { items: [], urls: new Set(), fps: new Set(), max: 200 };
+  // Captures are kept as JSON text: compact (no object graph) and immune to later
+  // in-place edits by players. Bounded by count and total size.
+  const store = { items: [], urls: new Set(), fps: new Set(), max: 400, bytes: 0, maxBytes: 64 * 1024 * 1024 };
   try {
     Object.defineProperty(window, KEY, { value: store, enumerable: false, configurable: false });
   } catch (_) {
@@ -26,30 +28,30 @@
 
   const fingerprint = (o) => [o.nm, o.v, o.w, o.h, o.fr, o.ip, o.op, o.layers.length].join('|');
 
-  const clone = (o) => {
-    try { return structuredClone(o); } catch (_) {}
-    try { return origParse(origStringify(o)); } catch (_) {}
-    return o;
-  };
-
   const notify = () => {
     try {
       document.dispatchEvent(new CustomEvent('__lottie_scraper_found', { detail: store.items.length }));
     } catch (_) {}
   };
 
-  const record = (o, source, url) => {
+  const record = (o, source, url, text) => {
     const fp = fingerprint(o);
-    if (store.fps.has(fp) || store.items.length >= store.max) return;
+    if (store.fps.has(fp) || store.items.length >= store.max || store.bytes >= store.maxBytes) return;
+    let json = text;
+    if (typeof json !== 'string') {
+      try { json = origStringify(o); } catch (_) { return; }
+    }
     store.fps.add(fp);
-    store.items.push({ data: clone(o), source, url: url || null });
+    store.bytes += json.length;
+    store.items.push({ json, source, url: url || null });
     notify();
   };
 
   // Look at the value and up to two levels below it (APIs often wrap animations).
-  const scan = (o, source, url, depth = 0) => {
+  // `text` is the source JSON when `o` is the root of it (saves re-serialising).
+  const scan = (o, source, url, depth = 0, text) => {
     if (!o || typeof o !== 'object') return;
-    if (isLottie(o)) return record(o, source, url);
+    if (isLottie(o)) return record(o, source, url, depth === 0 ? text : undefined);
     if (depth >= 2) return;
     let n = 0;
     if (Array.isArray(o)) {
@@ -67,7 +69,7 @@
   const wrappedParse = function parse(text, reviver) {
     const result = origParse.apply(this, arguments);
     try {
-      if (typeof text === 'string' && text.length > 120 && text.indexOf('layers') !== -1) scan(result, 'JSON.parse');
+      if (typeof text === 'string' && text.length > 120 && text.indexOf('layers') !== -1) scan(result, 'JSON.parse', null, 0, text);
     } catch (_) {}
     return result;
   };
@@ -96,7 +98,7 @@
             if (this.responseType === 'json') return scan(this.response, 'xhr', url);
             if (this.responseType === '' || this.responseType === 'text') {
               const t = this.responseText;
-              if (t && t.length < 40e6 && t.indexOf('"layers"') !== -1) scan(origParse(t), 'xhr', url);
+              if (t && t.length < 40e6 && t.indexOf('"layers"') !== -1) scan(origParse(t), 'xhr', url, 0, t);
             }
           } catch (_) {}
         });

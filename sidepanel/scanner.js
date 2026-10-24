@@ -140,18 +140,21 @@
       if (!id) { id = 'r' + Math.random().toString(36).slice(2, 9); el.setAttribute('data-lsid', id); }
       return id;
     };
+    // Keep lottie-web's `completed` / `__complete` flags: the side panel needs them to
+    // undo the player's in-place edits. Only drop the precomp `layers` it attaches
+    // (a duplicate of the asset's layers).
     const replacer = function (key, value) {
-      if (key === 'completed' || (typeof key === 'string' && key.startsWith('__'))) return undefined;
       if (key === 'layers' && this && this.ty === 0 && this.refId) return undefined;
+      if (key === '__used') return undefined;
       return value;
     };
-    const push = (data, source, url, el) => {
+    const push = (data, source, url, el, pristine) => {
       try {
         if (data && typeof data === 'object') {
           if (seenObj.has(data)) return;
           seenObj.add(data);
           if (!Array.isArray(data.layers)) return;
-          out.push({ json: JSON.stringify(data, replacer), source, url: url || null, elementId: tag(el) });
+          out.push({ json: JSON.stringify(data, replacer), source, url: url || null, elementId: tag(el), pristine: !!pristine });
         } else if (url) {
           out.push({ json: null, source, url, elementId: tag(el) });
         }
@@ -161,7 +164,7 @@
     // 1. Pristine captures from the document_start hook
     const store = window[Symbol.for('__lottie_scraper__')];
     if (store) {
-      store.items.forEach((it) => push(it.data, 'runtime:' + it.source, it.url, null));
+      for (const it of store.items) out.push({ json: it.json, source: 'runtime:' + it.source, url: it.url, elementId: null, pristine: true });
       store.urls.forEach((u) => push(null, 'runtime:loadAnimation', u, null));
     }
 
@@ -201,7 +204,7 @@
         else if (url) push(null, 'runtime:' + el.tagName.toLowerCase(), url, el);
       } catch (_) {}
     }
-    return out;
+    return { hooked: !!store, items: out };
   }
 
   // Highlight an element on the page (ISOLATED world).
@@ -359,22 +362,37 @@
     };
     const check = () => { if (signal.aborted) throw new Cancelled(); };
 
+    // Items keep the animation as a compact JSON string (not a live object graph):
+    // ~5-10x less memory, and every preview/export parses its own fresh copy.
+    // `restored` marks data recovered from a player (lottie-web edits it in place);
+    // a pristine copy found later (e.g. by fetching the source URL) replaces it.
     const addFound = (data, info) => {
+      const restored = info.fromPlayer ? X.restoreLottie(data) : false;
       const fp = X.fingerprint(data);
       const existing = found.get(fp);
       if (existing) {
+        let replaced = false;
+        if (existing.restored && !restored) {
+          existing.json = JSON.stringify(data);
+          existing.size = existing.json.length;
+          existing.meta = X.meta(data);
+          existing.restored = false;
+          replaced = true;
+        }
         if (info.url && !existing.url) existing.url = info.url;
         if (info.elementId && !existing.elementId) { existing.elementId = info.elementId; existing.frameId = info.frameId; }
         if (!existing.sources.includes(info.source)) existing.sources.push(info.source);
         if (info.dotLottie && !existing.dotLottie) existing.dotLottie = info.dotLottie;
-        onFound(existing, true);
+        if (info.baseName && !existing.baseName) existing.baseName = info.baseName;
+        onFound(existing, replaced ? 'replaced' : 'merged');
         return;
       }
       const json = JSON.stringify(data);
       const item = {
         id: 'a' + (found.size + 1) + '_' + Math.random().toString(36).slice(2, 6),
-        data,
-        size: new Blob([json]).size,
+        json,
+        size: json.length,
+        restored,
         meta: X.meta(data),
         url: info.url || null,
         pageUrl: info.pageUrl || tab.url,
@@ -426,19 +444,22 @@
     }
 
     // runtime first: hook captures are pristine copies of the data
+    let hooked = runtimeResults.length === 0;
     for (const r of runtimeResults) {
-      for (const it of r.result || []) {
+      const res = r.result || {};
+      if (res.hooked) hooked = true;
+      for (const it of res.items || []) {
         const pageUrl = frameUrls.get(r.frameId) || tab.url;
-        if (it.json) {
-          try {
-            const data = JSON.parse(it.json);
-            if (X.isLottie(data)) addFound(data, { source: it.source, url: it.url, elementId: it.elementId, frameId: r.frameId, pageUrl });
-          } catch (_) {}
-        } else if (it.url) {
-          addCandidate(it.url, it.source, { boost: 8, frameId: r.frameId, elementId: it.elementId, pageUrl });
-        }
+        // a known source URL always gets fetched: the file on the server is the untouched original
+        if (it.url) addCandidate(it.url, it.source, { boost: 8, frameId: r.frameId, elementId: it.elementId, pageUrl });
+        if (!it.json) continue;
+        try {
+          const data = JSON.parse(it.json);
+          if (X.isLottie(data)) addFound(data, { source: it.source, url: it.url, elementId: it.elementId, frameId: r.frameId, pageUrl, fromPlayer: !it.pristine });
+        } catch (_) {}
       }
     }
+    stats.hookMissing = !hooked;
 
     const scripts = new Map(); // url -> pageUrl
     const links = new Set();

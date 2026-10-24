@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lottie Scraper</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <!-- Header -->
+    <header class="top">
+      <div class="brand">
+        <svg class="logo" viewBox="0 0 48 48" aria-hidden="true">
+          <defs>
+            <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#2dd4bf" />
+              <stop offset="1" stop-color="#8b5cf6" />
+            </linearGradient>
+          </defs>
+          <rect width="48" height="48" rx="14" fill="url(#lg)" />
+          <path d="M14 31c6 0 7-14 12-14 3 0 4 3 4 5" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" />
+          <circle cx="33" cy="30" r="4" fill="#fff" />
+        </svg>
+        <div>
+          <h1>Lottie Scraper</h1>
+          <p class="sub">Detect · Preview · Bulk export</p>
+        </div>
+      </div>
+      <button class="icon-btn" id="btnSettings" title="Settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
+      </button>
+    </header>
+
+    <!-- Target page -->
+    <section class="target card-surface">
+      <img class="favicon" id="favicon" alt="" />
+      <div class="target-text">
+        <div class="target-title" id="tabTitle">—</div>
+        <div class="target-host" id="tabHost"></div>
+      </div>
+      <div class="detector" id="detector" title="Animations the live detector sees on this page">
+        <span class="pulse"></span><span id="detectCount">0</span>
+      </div>
+    </section>
+
+    <!-- Scan controls -->
+    <section class="controls">
+      <div class="segmented" role="radiogroup" aria-label="Scan mode">
+        <button role="radio" data-mode="quick" title="DOM, players, runtime hooks and network log">Quick</button>
+        <button role="radio" data-mode="deep" title="Quick + every script bundle and JSON response">Deep</button>
+        <button role="radio" data-mode="crawl" title="Deep + same-origin pages linked from this page">Crawl</button>
+      </div>
+      <button class="btn primary big" id="btnScan">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <span>Scan page</span>
+      </button>
+    </section>
+
+    <!-- Progress -->
+    <section class="progress card-surface" id="progress" hidden>
+      <div class="progress-head">
+        <span class="phase" id="phase">Preparing…</span>
+        <span class="pct" id="pct">0%</span>
+      </div>
+      <div class="bar"><div class="fill" id="fill"></div></div>
+      <div class="progress-detail" id="detail"></div>
+      <div class="chips" id="chips"></div>
+      <button class="btn ghost small" id="btnCancel">Cancel</button>
+    </section>
+
+    <!-- Toolbar -->
+    <section class="toolbar" id="toolbar" hidden>
+      <label class="check">
+        <input type="checkbox" id="selectAll" />
+        <span class="box"></span>
+        <span id="countLabel">0 found</span>
+      </label>
+      <div class="search">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="search" type="search" placeholder="Filter…" />
+      </div>
+      <select id="sort" title="Sort">
+        <option value="found">Found</option>
+        <option value="name">Name</option>
+        <option value="size">Size</option>
+        <option value="duration">Duration</option>
+        <option value="layers">Layers</option>
+      </select>
+    </section>
+
+    <!-- Results -->
+    <main class="grid" id="grid"></main>
+
+    <!-- Empty state -->
+    <section class="empty" id="empty">
+      <div class="radar">
+        <span class="ring r1"></span><span class="ring r2"></span><span class="ring r3"></span>
+        <span class="sweep"></span>
+        <span class="dot d1"></span><span class="dot d2"></span><span class="dot d3"></span>
+      </div>
+      <h2 id="emptyTitle">Ready to hunt animations</h2>
+      <p id="emptyText">Pick a mode and press <b>Scan page</b>. Lottie Scraper checks players, runtime data, network traffic, inline JSON and script bundles.</p>
+    </section>
+
+    <!-- Dock -->
+    <footer class="dock" id="dock" hidden>
+      <div class="dock-info">
+        <strong id="selCount">0 selected</strong>
+        <span id="selSize">0 KB</span>
+      </div>
+      <div class="dock-actions">
+        <button class="btn ghost" id="btnJson" title="Download selected as separate JSON files">JSON</button>
+        <button class="btn primary" id="btnZip">
+          <svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+          <span>Download ZIP</span>
+        </button>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Detail -->
+  <dialog id="detailDlg" class="sheet">
+    <div class="sheet-head">
+      <h3 id="dTitle">Animation</h3>
+      <button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>
+    <div class="stage" id="dStage"></div>
+    <div class="player-bar">
+      <button class="icon-btn" id="dPlay" aria-label="Play/Pause"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></button>
+      <input type="range" id="dScrub" min="0" max="100" value="0" />
+      <span class="frame" id="dFrame">0</span>
+      <button class="chip-btn" id="dSpeed">1×</button>
+      <button class="chip-btn" id="dBg" title="Background">BG</button>
+    </div>
+    <div class="meta-grid" id="dMeta"></div>
+    <div class="sources" id="dSources"></div>
+    <div class="sheet-actions">
+      <button class="btn primary" id="dDownload">Download JSON</button>
+      <button class="btn ghost" id="dDotLottie" hidden>.lottie</button>
+      <button class="btn ghost" id="dCopy">Copy JSON</button>
+      <button class="btn ghost" id="dLocate" hidden>Locate on page</button>
+      <button class="btn ghost" id="dOpen" hidden>Open source</button>
+    </div>
+  </dialog>
+
+  <!-- Settings -->
+  <dialog id="settingsDlg" class="sheet">
+    <div class="sheet-head">
+      <h3>Settings</h3>
+      <button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>
+    <div class="settings">
+      <h4>Export</h4>
+      <label class="toggle"><input type="checkbox" data-setting="embedImages" /><span class="track"></span><span class="lbl">Embed external images<small>Inline image assets as base64 so every JSON is self-contained</small></span></label>
+      <label class="toggle"><input type="checkbox" data-setting="includeOriginals" /><span class="track"></span><span class="lbl">Include original .lottie files<small>Keep dotLottie archives alongside the extracted JSON</small></span></label>
+      <label class="toggle"><input type="checkbox" data-setting="minify" /><span class="track"></span><span class="lbl">Minify JSON<small>Smaller files; turn off for pretty-printed output</small></span></label>
+      <label class="toggle"><input type="checkbox" data-setting="saveAs" /><span class="track"></span><span class="lbl">Ask where to save<small>Show the Save dialog for each download</small></span></label>
+      <h4>Previews</h4>
+      <label class="toggle"><input type="checkbox" data-setting="autoplay" /><span class="track"></span><span class="lbl">Autoplay previews<small>Otherwise play on hover</small></span></label>
+      <label class="toggle"><input type="checkbox" data-setting="checker" /><span class="track"></span><span class="lbl">Checkerboard background<small>Shows transparency in previews</small></span></label>
+      <h4>Scraper limits</h4>
+      <label class="num">Pages to crawl <input type="number" min="1" max="200" data-setting="maxPages" /></label>
+      <label class="num">Scripts to scan <input type="number" min="1" max="500" data-setting="maxScripts" /></label>
+      <label class="num">URLs to validate <input type="number" min="10" max="3000" data-setting="maxCandidates" /></label>
+    </div>
+  </dialog>
+
+  <!-- Export overlay -->
+  <div class="overlay" id="exportOverlay" hidden>
+    <div class="export-card">
+      <div class="ring-progress">
+        <svg viewBox="0 0 120 120">
+          <circle cx="60" cy="60" r="52" class="ring-bg" />
+          <circle cx="60" cy="60" r="52" class="ring-fg" id="ringFg" />
+        </svg>
+        <span id="exportPct">0%</span>
+      </div>
+      <div class="export-title" id="exportTitle">Packing ZIP…</div>
+      <div class="export-detail" id="exportDetail"></div>
+      <button class="btn ghost small" id="btnExportCancel">Cancel</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status"></div>
+
+  <script src="../shared/extract.js"></script>
+  <script src="../shared/zip.js"></script>
+  <script src="lib/lottie_light.min.js"></script>
+  <script src="scanner.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
